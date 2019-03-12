@@ -1,0 +1,1364 @@
+---
+title: "Clicker Heroes Optimizer - R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+editor_options:
+  chunk_output_type: inline
+---
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+                                 !!!! ---- U s e r  i n p u t ---- !!!!
+
+Provide number of AS, Highest Zone Ever and number of sacrificed hero souls
+```{r Provide number of AS and HZE:, echo=FALSE, results='asis'}
+transcension = 136
+
+cat("!!!! >>>> TRANSCENSION NO. ",transcension," <<<< !!!!\n\n",sep="")
+
+as  = 107294
+
+hze = 1107115
+
+cat("AS  : ",as ,"\t\n\n" ,sep = "")
+cat("HZE : ",hze,"\t\n\n" ,sep = "")
+
+tp  = 25 - 23 * exp(-0.0003 * as)
+
+cat("TP  : ",tp ,"%\t\n\n",sep = "")
+
+sacrifice = "6.353e21458"
+
+cat("Sacrificed HS : ",sacrifice,"\t\n",sep="")
+
+```
+
+Provide expected maximum levels of respective Ancients
+and acceptable limiting values of their effects
+```{r Provide ancients levels, echo=TRUE}
+# 1. Chronos,      max_lvl = 1200 (1101)
+chronos_level      = 2000
+t = 3
+# 2. Kumawakamaru, max_lvl = 15000 (14972)
+kumawakamaru_level = 15000
+m = 3
+# 3. Atman,        max_lvl = 2900 (2880)
+atman_level        = 3000
+pc = 0.0525
+# 5. Dora,         max_lvl = 18800 (18715)
+dora_level         = 19000
+cc = 0.015
+# 6. Reach parameter - to limit the effect to given share of levels
+reach = 0.5
+```
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+```{r Initial Setup, include=FALSE, results='asis'}
+sessionInfo()
+cat("\n\n\n")
+
+Sys.setlocale("LC_ALL","English")
+Sys.setenv(LANG = "en_US.UTF-8")
+cat("\n\n\n")
+
+library(foreach)
+library(dplyr)
+library(Rmpfr)
+library(knitr)
+cat("\n\n\n")
+
+sessionInfo()
+```
+```{r Comments, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+# Xyliqil : +% effectiveness of all idle bonuses ((1.5^level-1)×100)%. This includes bonuses from  Siyalatas, Libertas and Nogardnit. Increases the % gained from level up on the idle Ancients, not a direct multiplier to your idle DPS or Gold Gold. Cost: (current level)+1 Ancient Souls per level.
+# 
+# Chor'gorloth : -x% Ancient cost ((1-0.95^level)×100)%.
+# Cost: (current level)+1 Ancient Souls per level.
+# 
+# Phandoryss : +x% DPS (100% per level).
+# Cost: 1 Ancient Souls per level.
+# 
+# Ponyboy : +x% Primal Hero Souls (level^2×100)%.
+# Cost: (current level)+1 Ancient Souls per level.
+# 
+# Borb : +x% effectiveness of Kumawakamaru (+10% per level).
+# Cost: (current level)+1 Ancient Souls per level.
+# 
+# Rhageist : +x% effectiveness of Atman (+25% per level).
+# Cost: (current level)+1 Ancient Souls per level.
+# 
+# K'Ariqua : +x% effectiveness of Bubos (+50% per level).
+# Cost: (current level)+1 Ancient Souls per level.
+# 
+# Orphalas : +x% effectiveness of Chronos (+75% per level).
+# Cost: (current level)+1 Ancient Souls per level.
+# 
+# Sen-Akhan : +x% effectiveness of Dora (+100% per level).
+# Cost: (current level)+1 Ancient Souls per level.
+# 
+# Effective levels
+# 
+# 1. Chronos / Orphalas
+# 2. Kumawakamaru / Borb
+# 3. Atman / Rhageist
+# 4. Bubos / K'Ariqua
+# 5. Dora / Sen-Akhan
+
+```
+```{r Declare boss_time function, include=FALSE, results='asis'}
+# 1. Chronos / Orphalas
+boss_time = function(lvl,orph_lvl,chr_lvl){
+###   Declare function boss_time ###
+  
+  scaled       = lvl %/% 500
+  
+  base_time    = 30
+  
+  orph_gain    = 75 * orph_lvl
+  
+  chronos_gain = base_time * ( 1 - exp( -0.034 * chr_lvl ) )
+  
+  zone_loss    = -2 * scaled
+  
+  eff_time     = max( base_time + chronos_gain * ( 1 + orph_gain / 100 ) + zone_loss , 2 )
+  
+  return(eff_time)
+
+###   End function boss_time   ###
+}
+```
+```{r Declare monsters_zone function, include=FALSE, results='asis'}
+# 2. Kumawakamaru / Borb
+monsters_zone = function(lvl,borb_lvl,kuma_lvl){
+###   Declare function monsters_zone   ###
+  
+  scaled        = lvl %/% 500
+    
+  base_monsters = 10
+  
+  borb_gain     = 12.5 * borb_lvl
+  
+  kuma_gain     = 8 * ( 1 - exp( -0.01 * kuma_lvl ) )
+  
+  monsters_gain = scaled  * 0.1
+  
+  eff_monsters  = max( base_monsters + monsters_gain - kuma_gain * ( 1 + borb_gain / 100 ), 2 )
+
+  return(eff_monsters)
+  
+###   End function monsters_zone   ###
+}
+```
+```{r Declare primals function, include=FALSE, results='asis'}
+# 3. Atman / Rhageist
+primals = function(lvl,rhag_lvl,atman_lvl){
+###   Declare function primals   ###
+  
+  scaled       = lvl %/% 500
+  
+  base_prichnc = 0.25
+  
+  rhag_gain    = 25 * rhag_lvl
+  
+  atman_gain   = 0.75 * ( 1 - exp( -0.013 * atman_lvl ) )
+  
+  prichnc_loss = -0.02  * scaled
+  
+  eff_prichnc  = max( base_prichnc + prichnc_loss + atman_gain * ( 1 + rhag_gain / 100 ) , 0.05 )
+  
+  return(eff_prichnc)
+  
+###   End function primals   ###
+}
+```
+```{r Declare boss_life function, include=FALSE, results='asis'}
+# 4. Bubos / K'Ariqua
+boss_life = function(lvl,kariqua_lvl,bubos_lvl){
+###   Declare function boss_life   ###
+  
+  scaled       = lvl %/% 500
+  
+  base_boss    = 10
+  
+  kariqua_gain = 50 * kariqua_lvl
+  
+  bubos_loss   = 5 * ( 1 - exp( -0.02 * bubos_lvl ) )
+  
+  boss_hp_gain = 0.4 * scaled
+  
+  boss_hp      = max( base_boss + boss_hp_gain - bubos_loss * ( 1 + kariqua_gain / 100 ) , 5 ) %>% floor()
+  
+  return(boss_hp)
+  
+###   End function boss_life   ###
+}
+```
+```{r Declare chest_chance function, include=FALSE, results='asis'}
+# 5. Dora / Sen-Akhan
+chest_chance = function(lvl,sen_akhan_lvl,dora_lvl){
+###   Declare function chest_chance   ###
+  
+  scaled = lvl %/% 500
+  
+  chest_ch = ( 10^-10 + 
+                 ( 10^-2 - 10^-10 ) * 
+                 exp( -0.006 * scaled ) 
+               ) * ( 
+                      1 + 99 * ( 1 - exp( -0.002 * dora_lvl ) ) * ( 1 + sen_akhan_lvl ) 
+                    )
+  
+  return(chest_ch)
+  
+###   End function chest_chance   ###
+}
+```
+```{r Declare grow_cost_lvl function, include=FALSE, results='asis'}
+# Cumulative cost of Outsider
+grow_cost_lvl = function(lvl) {
+  
+  if(lvl<=0) return(0)
+  
+  lvl %>% 
+    seq(0,.) %>% 
+    sum() %>% 
+    return()
+  
+}
+```
+```{r Declare max_lvl function, include=FALSE, results='asis'}
+# Max available level for Outsiders with growing costs
+max_lvl = function(as) { 
+  
+  (1+8*as) %>% 
+    sqrt() %>% 
+    `-`(1) %>% 
+    `/`(2) %>% 
+    floor() %>% 
+    return() 
+  
+}
+```
+```{r Declare orphalas_lvl function, include=FALSE, results='asis'}
+# 1. Chronos / Orphalas - OK - max_lvl = 1200
+
+orphalas_lvl = function(max_lvl
+                        ,desired_zone
+                        ,chronos_lvl
+                        ,tm
+                        ){
+  
+   chr_levs = foreach( lvl      = 0:max_lvl
+                      ,.combine = c
+              ) %do% if( boss_time(lvl        = desired_zone
+                                  ,orph_lvl   = lvl
+                                  ,chr_lvl    = chronos_lvl) >= tm ) {lvl}
+
+chr_levs %>% min() %>% return()
+}
+```
+```{r Declare borb_lvl function, include=FALSE, results='asis'}
+# 2. Kumawakamaru / Borb - OK - max_lvl = 3800
+
+borb_lvl = function(max_lvl
+                    ,desired_zone
+                    ,kumawakamaru_lvl
+                    ,monsters
+                    ){
+  
+   kum_levs = foreach( lvl      = 0:max_lvl
+                      ,.combine = c
+              ) %do% if( monsters_zone(lvl         = desired_zone
+                                      ,borb_lvl    = lvl
+                                      ,kuma_lvl    = kumawakamaru_lvl) <= monsters ) {lvl}
+
+kum_levs %>% min() %>% return()
+}
+```
+```{r Declare rhag_lvl function, include=FALSE, results='asis'}
+# 3. Atman / Rhageist - OK - max_lvl = 2900
+
+rhag_lvl = function(max_lvl
+                    ,desired_zone
+                    ,atman_lvl
+                    ,chance
+                    ){
+  
+  atm_levs = foreach( lvl      = 0:max_lvl
+                     ,.combine = c
+        ) %do% if( primals(lvl        = desired_zone
+                          ,rhag_lvl   = lvl
+                          ,atman_lvl  = atman_lvl) >= chance ) {lvl}
+  
+atm_levs %>% min() %>% return()
+}
+```
+```{r Declare kari_lvl function, include=FALSE, results='asis'}
+# 4. Bubos / K'Ariqua - OK - max_lvl = 1900
+
+kari_lvl = function(max_lvl
+                    ,desired_zone
+                    ,bubos_lvl
+                    ,life
+                    ){
+  
+  bub_levs = foreach( lvl      = 0:max_lvl
+                     ,.combine = c
+        ) %do% if( boss_life(lvl         = desired_zone
+                            ,kariqua_lvl = lvl
+                            ,bubos_lvl   = bubos_lvl) <= life ) {lvl}
+  
+bub_levs %>% min() %>% return()
+}
+```
+```{r Declare seak_lvl function, include=FALSE, results='asis'}
+# 5. Dora / Sen-Akhan - max_lvl = 18800
+
+seak_lvl = function(max_lvl
+                   ,desired_zone
+                   ,dora_lvl
+                   ,chance
+                   ){
+  
+  dora_levs = foreach( lvl      = 0:max_lvl
+                      ,.combine = c
+              ) %do% if( chest_chance(lvl           = desired_zone
+                                     ,sen_akhan_lvl = lvl
+                                     ,dora_lvl      = dora_lvl) >= chance ) {lvl}
+
+dora_levs %>% min() %>% return()  
+}
+```
+```{r Declare distr function, include=FALSE, results='asis'}
+# 6. Ponyboy vs Chor'gorloth benefit
+# based on u/aperfectring 's spreadsheet
+# Number of AS to be distributed to Ponyboy and Chor'gorloth
+
+distr = function(as_pc,max_lvl){
+  
+  pony_tbl = foreach( lvl = seq( max_lvl ,0 ,-1 )
+                   ,.combine = rbind 
+                   ) %do%
+           data_frame(
+              pony            = lvl
+             ,pony_cost       = grow_cost_lvl(lvl)  
+             ,chor            = (1+8*(as_pc - grow_cost_lvl(lvl))) %>% sqrt() %>% `-`(1) %>% `/`(2) %>% floor() %>% min(.,150)
+             ,chor_cost       = (1+8*(as_pc - grow_cost_lvl(lvl))) %>% sqrt() %>% `-`(1) %>% `/`(2) %>% floor() %>% min(.,150) %>% grow_cost_lvl()
+             ,overall_benefit = (pony^2 * 10 + 1) * (( 1 / 0.95 )^chor)
+           ) %>%
+           filter(.
+                  , pony >= chor
+                  ) %>%
+          select(.,pony,chor,overall_benefit)
+  
+  chor_tbl = foreach( lvl = min( max_lvl ,150 ) %>% seq( . ,0 ,-1 )
+                    ,.combine = rbind 
+                    ) %do%
+            data_frame(
+               pony            = (1+8*(as_pc - grow_cost_lvl(lvl))) %>% sqrt() %>% `-`(1) %>% `/`(2) %>% floor()
+              ,pony_cost       = (1+8*(as_pc - grow_cost_lvl(lvl))) %>% sqrt() %>% `-`(1) %>% `/`(2) %>% floor() %>% grow_cost_lvl()
+              ,chor            = lvl
+              ,chor_cost       = grow_cost_lvl(lvl)
+              ,overall_benefit = (pony^2 * 10 + 1) * (( 1 / 0.95 )^chor)
+            ) %>%
+            filter(.
+                    , chor >= pony
+                  ) %>%
+            select(.,pony,chor,overall_benefit)
+
+  pony_chor_lvl = union_all(pony_tbl,chor_tbl) %>%
+                  filter(.,overall_benefit == max(overall_benefit)) %>%
+                  distinct() %>%
+                  select(.,pony,chor)
+
+  return(pony_chor_lvl)
+
+}
+
+#distr(5000,10000)
+```
+```{r Declare HS gain functions, include=FALSE, results='asis'}
+# Hero souls gain of the highest boss with 100% chance of occuring - using foreach and Rmpfr
+
+base_hs = function(lvl,tp,ponyboy,prec){
+  
+  if(lvl == 100) return(mpfr(1,prec))
+  
+  ret =  floor(
+                ( (mpfr(lvl,prec) - 80) / 25 )^1.3
+                ) * 
+         (1 + mpfr(ponyboy,prec) / 100)
+            
+          
+  return(mpfr(ret,prec)[1])
+  
+}
+
+tr_hs = function(lvl,tp,ponyboy,prec){
+  
+  if(lvl == 100) return(mpfr(0, prec))
+  
+  ret = 20 * ( 1 + 10 * (mpfr(ponyboy,prec) ^ 2) ) * ( 1 + mpfr(tp,prec) / 100 ) ^
+    ( mpfr(lvl,prec) / 5 - 20 )
+  
+  return(mpfr(ret,prec)[1])
+  
+}
+```
+```{r Provide Rmpfr precision, include=FALSE, results='asis'}
+prec = 1000
+```
+```{r Optimize using multiplier, message=FALSE, include=FALSE, results='asis'}
+# Move zones using multiplier - less accurate, but much faster than checking zone after zone, fine tuning in the next step
+gc()
+
+hs        = mpfr(0, prec)
+zone_gain = 1
+max       = max_lvl(as)
+as_pc_prev = 0
+available = FALSE
+first = TRUE
+
+repeat{
+  
+  cat("Zone multiplier: ",zone_gain         ,"\n",sep = "")
+  
+  desired_zone = ( (hze * zone_gain) %/% 500 - 100 ) * 500
+  
+  cat("Desired zone: "   ,desired_zone      ,"\n",sep = "")
+  cat("Zone gain: "      ,desired_zone - hze,"\n",sep = "")
+  
+  limited_zone = (reach * desired_zone) %/% 500 *500
+  cat("Limited zone: "   ,limited_zone      ,"\n",sep = "")
+
+  cat("    Calculate: Orphalas \n")
+  orphalas = orphalas_lvl(max_lvl      = max
+                         ,desired_zone = limited_zone
+                         ,chronos_lvl  = chronos_level
+                         ,tm           = t
+                         )
+
+  cat("    Calculate: Borb \n")  
+  borb = borb_lvl(max_lvl          = max
+                 ,desired_zone     = desired_zone
+                 ,kumawakamaru_lvl = kumawakamaru_level
+                 ,monsters         = m
+                 )
+
+  cat("    Calculate: Rhageist \n")  
+  rhageist = rhag_lvl(max_lvl      = max
+                     ,desired_zone = limited_zone
+                     ,atman_lvl    = atman_level
+                     ,chance       = pc
+                     )
+
+  # cat("    Calculate: K'Ariqua \n")
+  # kariqua = kari_lvl(max_lvl      = max
+  #                   ,desired_zone = desired_zone
+  #                   ,bubos_lvl    = bubos_level
+  #                   ,life         = h
+  #                   )
+
+  cat("    Calculate: Sen-Akhan \n")  
+  sen_akhan = seak_lvl(max_lvl      = max
+                      ,desired_zone = limited_zone
+                      ,dora_lvl     = dora_level
+                      ,chance       = cc
+                      )
+  
+  cat("    Calculate: K'Ariqua \n")
+  kariqua = ( as - 
+              grow_cost_lvl(orphalas) - 
+              grow_cost_lvl(borb)     - 
+              grow_cost_lvl(rhageist) - 
+              grow_cost_lvl(sen_akhan) 
+              ) %>% max(.,0) %>% max_lvl()
+  
+  
+  cat("    Calculate: AS spent so far: ")
+  as_spent = grow_cost_lvl(orphalas) + 
+             grow_cost_lvl(borb)     + 
+             grow_cost_lvl(rhageist) + 
+             grow_cost_lvl(kariqua)  +
+             grow_cost_lvl(sen_akhan)
+  cat(as_spent,"\n")
+
+# Ponyboy vs Chor'gorloth benefit
+# based on u/aperfectring 's spreadsheet
+# Number of AS to be distributed to Ponyboy and Chor'gorloth
+  cat("    Calculate: AS for Ponyboy and Chor'gorloth: ")
+  as_pc = as - as_spent
+  cat(as_pc,"\n")
+
+  if( as_pc > 0 ){
+  cat("    Condition fulfilled: as_pc > 0\n")
+  max_l = max_lvl(as_pc)
+  
+  if(as_pc_prev!=as_pc){ pony_chor_lvl = distr(as_pc,max_l) }
+  
+  as_pc_prev = as_pc
+  
+  pony = pony_chor_lvl %>% select(.,pony)
+
+  chor = pony_chor_lvl %>% select(.,chor)
+  #Keep Chor maxed if possible
+  if(chor[[1]]==150 & first==TRUE) {available=TRUE
+                                    first=FALSE}
+  
+  if(chor[[1]]<150 & available==TRUE) {
+    cat("    Condition fulfilled: chor < 150 \n")
+    #break
+    }
+  
+  cat("    Ponyboy level: ",pony[[1]],"\n",sep = "")
+
+  cat("    Calculate: Ponyboy % gain \n")
+  ponyboy_gain = (pony^2)*1000
+
+  cat("    Calculate: Base HS \n")
+  bh = base_hs(lvl = desired_zone
+        ,tp = tp
+        ,ponyboy = ponyboy_gain %>% as.vector()
+        ,prec = prec
+        )
+  
+  ##print(bh)
+  
+  cat("    Calculate: Transcendent HS \n")
+  th = tr_hs(lvl = desired_zone
+      ,tp = tp
+      ,ponyboy = ponyboy_gain %>% as.vector()
+      ,prec = prec
+      )
+
+  cat("    Calculate: Calculate HS gain \n")
+  hs_new = bh + th
+    
+  if( hs_new >= hs ) {
+    
+    hs = hs_new
+
+    zone_gain = zone_gain + 0.01
+    
+    out_zone = desired_zone
+    
+    xyl_lev = ( as - grow_cost_lvl(chor[[1]]) - grow_cost_lvl(pony[[1]]) - as_spent ) %>% max(.,0) %>% max_lvl()
+    
+    out_0 = data_frame(Outsider = "Xyliqil"
+                       ,Level   = xyl_lev
+                       )
+    out_1 = data_frame(Outsider = "Chor'gorloth"
+                       ,Level   = chor[[1]]
+                       ) 
+    out_2 = data_frame(Outsider = "Phandoryss"
+                       ,Level   = ( as - grow_cost_lvl(chor[[1]]) - grow_cost_lvl(pony[[1]]) - grow_cost_lvl(xyl_lev) - as_spent ) %>% max(.,0)
+                       )
+    out_3 = data_frame(Outsider = "Ponyboy"
+                       ,Level   = pony[[1]]
+                       )
+    out_4 = data_frame(Outsider = "Borb"
+                       ,Level   = borb
+                       )
+    out_5 = data_frame(Outsider = "Rhageist"
+                       ,Level   = rhageist
+                       )
+    out_6 = data_frame(Outsider = "K'Ariqua"
+                       ,Level   = kariqua
+                       )
+    out_7 = data_frame(Outsider = "Orphalas"
+                       ,Level   = orphalas
+                       )
+    out_8 = data_frame(Outsider = "Sen-Akhan"
+                       ,Level   = sen_akhan
+                       )
+    
+    results_1 = bind_rows(out_0,out_1,out_2,out_3,out_4,out_5,out_6,out_7,out_8)
+  
+  #hs_new >= hs   
+  } else {
+    
+    break
+    
+  }
+  
+  #as_pc > 0
+  } else {
+    
+    break
+    
+  }
+  
+}
+
+print(results_1)
+
+hs %>% 
+  mpfr(.,9)                     %>% 
+  format(.,scientific=20)       %>% 
+  tibble::as_tibble()           %>% 
+  rename(.,"HS top Boss"=value) %>% 
+  print()
+```
+```{r fine optimization, echo=FALSE, results='asis'}
+mult_0 = zone_gain - 0.1
+mult_1 = zone_gain + 0.02
+
+zone_0 = ( (hze * mult_0) %/% 500 ) * 500
+zone_1 = ( (hze * mult_1) %/% 500 + 1) * 500
+
+cat("zone_0: ",zone_0," zone_1: ",zone_1,"\n",sep = "")
+    
+fine_zone = seq(zone_0,zone_1,500)
+cat(    "Number of refinement steps: ",length(fine_zone),"\n",sep = "")
+
+available  = FALSE
+first      = TRUE
+hs         = mpfr(0, prec)
+as_pc_prev = 0
+
+for(zone in fine_zone){
+   
+  desired_zone = zone
+  
+  cat("Desired zone: "   ,desired_zone      ,"\n",sep = "")
+  cat("Zone gain: "      ,desired_zone - hze,"\n",sep = "")
+
+  limited_zone = (reach * desired_zone) %/% 500 *500
+  cat("Limited zone: "   ,limited_zone      ,"\n",sep = "")
+
+  cat("    Calculate: Orphalas \n")
+  orphalas = orphalas_lvl(max_lvl      = max
+                         ,desired_zone = limited_zone
+                         ,chronos_lvl  = chronos_level
+                         ,tm           = t
+                         )
+
+  cat("    Calculate: Borb \n")  
+  borb = borb_lvl(max_lvl          = max
+                 ,desired_zone     = desired_zone
+                 ,kumawakamaru_lvl = kumawakamaru_level
+                 ,monsters         = m
+                 )
+
+  cat("    Calculate: Rhageist \n")  
+  rhageist = rhag_lvl(max_lvl      = max
+                     ,desired_zone = limited_zone
+                     ,atman_lvl    = atman_level
+                     ,chance       = pc
+                     )
+
+  # cat("    Calculate: K'Ariqua \n")
+  # kariqua = kari_lvl(max_lvl      = max
+  #                   ,desired_zone = desired_zone
+  #                   ,bubos_lvl    = bubos_level
+  #                   ,life         = h
+  #                   )
+
+  cat("    Calculate: Sen-Akhan \n")  
+  sen_akhan = seak_lvl(max_lvl      = max
+                      ,desired_zone = limited_zone
+                      ,dora_lvl     = dora_level
+                      ,chance       = cc
+                      )
+
+  cat("    Calculate: K'Ariqua \n")
+  kariqua = ( as - 
+              grow_cost_lvl(orphalas) - 
+              grow_cost_lvl(borb)     - 
+              grow_cost_lvl(rhageist) - 
+              grow_cost_lvl(sen_akhan) 
+              ) %>% max(.,0) %>% max_lvl()
+  
+  cat("    Calculate: AS spent so far: ")
+  as_spent = grow_cost_lvl(orphalas) + 
+             grow_cost_lvl(borb)     + 
+             grow_cost_lvl(rhageist) + 
+             grow_cost_lvl(kariqua)  +
+             grow_cost_lvl(sen_akhan)
+  cat(as_spent,"\n")
+
+# Ponyboy vs Chor'gorloth benefit
+# based on u/aperfectring 's spreadsheet
+# Number of AS to be distributed to Ponyboy and Chor'gorloth
+  cat("    Calculate: AS for Ponyboy and Chor'gorloth: ")
+  as_pc = as - as_spent
+  cat(as_pc,"\n")
+
+  if( as_pc > 0 ){
+  cat("    Condition fulfilled: as_pc > 0\n")
+
+  max_l = max_lvl(as_pc)
+
+  if(as_pc_prev!=as_pc){ pony_chor_lvl = distr(as_pc,max_l) }
+  
+  as_pc_prev = as_pc
+
+  pony = pony_chor_lvl %>% select(.,pony)
+
+  chor = pony_chor_lvl %>% select(.,chor)
+
+  #Keep Chor maxed if possible
+  if(chor[[1]]==150 & first==TRUE) {available=TRUE
+                                    first=FALSE}
+  if(chor[[1]]<150 & available==TRUE) {
+    cat("    Condition fulfilled: chor < 150 \n")
+    #break
+    }
+
+  cat("    Ponyboy level: ",pony[[1]],"\n",sep = "")
+
+  cat("    Calculate: Ponyboy % gain \n")
+  ponyboy_gain = (pony^2)*1000
+
+  cat("    Calculate: Base HS \n")
+  bh = base_hs(lvl = desired_zone
+        ,tp = tp
+        ,ponyboy = ponyboy_gain %>% as.vector()
+        ,prec = prec
+        )
+  
+  ##print(bh)
+  
+  cat("    Calculate: Transcendent HS \n")
+  th = tr_hs(lvl = desired_zone
+      ,tp = tp
+      ,ponyboy = ponyboy_gain %>% as.vector()
+      ,prec = prec
+      )
+
+  cat("    Calculate: Calculate HS gain \n")
+  hs_new = bh + th
+    
+  if( hs_new >= hs ) {
+    
+    hs = hs_new
+
+    out_zone = desired_zone
+    
+    xyl_lev = ( as - grow_cost_lvl(chor[[1]]) - grow_cost_lvl(pony[[1]]) - as_spent ) %>% max(.,0) %>% max_lvl()
+    
+    out_0 = data_frame(Outsider = "Xyliqil"
+                       ,Level   = xyl_lev
+                       )
+    out_1 = data_frame(Outsider = "Chor'gorloth"
+                       ,Level   = chor[[1]]
+                       ) 
+    out_2 = data_frame(Outsider = "Phandoryss"
+                       ,Level   = ( as - grow_cost_lvl(chor[[1]]) - grow_cost_lvl(pony[[1]]) - grow_cost_lvl(xyl_lev) - as_spent ) %>% max(.,0)
+                       )
+    out_3 = data_frame(Outsider = "Ponyboy"
+                       ,Level   = pony[[1]]
+                       )
+    out_4 = data_frame(Outsider = "Borb"
+                       ,Level   = borb
+                       )
+    out_5 = data_frame(Outsider = "Rhageist"
+                       ,Level   = rhageist
+                       )
+    out_6 = data_frame(Outsider = "K'Ariqua"
+                       ,Level   = kariqua
+                       )
+    out_7 = data_frame(Outsider = "Orphalas"
+                       ,Level   = orphalas
+                       )
+    out_8 = data_frame(Outsider = "Sen-Akhan"
+                       ,Level   = sen_akhan
+                       )
+    
+    results_2 = bind_rows(out_0,out_1,out_2,out_3,out_4,out_5,out_6,out_7,out_8)
+    
+  #hs_new >= hs  
+  } else {
+    
+    cat("    Condition fulfilled: hs_new < hs \n")
+    break
+    
+  }
+  
+  #as_pc > 0
+  } else {
+    
+    cat("    Condition fulfilled: as_pc <= 0 \n")
+    break
+    
+  }
+  
+}
+
+print(results_2)
+
+hs %>% 
+  mpfr(.,9)                     %>% 
+  format(.,scientific=20)       %>% 
+  tibble::as_tibble()           %>% 
+  rename(.,"HS top Boss"=value) %>% 
+  print()
+```
+```{r Check if Outsiders cost equals provided number of AS, echo=FALSE, results='asis'}
+# Checkpoint
+as_check = results_2 %>% 
+  filter   (.,Outsider != "Phandoryss") %>%
+  transmute(.,cost     =  sapply(Level,grow_cost_lvl) ) %>%
+  summarise(.,sum      =  sum(cost)) +
+           results_2 %>% 
+  filter(.,Outsider == "Phandoryss") %>% 
+  select(.,Level) %>% as_tibble()
+
+data_frame(Test = (as_check[1,1]-as)
+          ,Result = if_else(Test==0,"OK","Not OK")
+          ) %>%
+print()
+```
+```{r Calculate HS gain, include=FALSE}
+pony_mnl = 3
+ponyboy_gain_mnl = (pony_mnl^2)*1000
+zone_mnl = 1616500
+
+hs_gain_mnl = foreach( lvl = seq( 105 ,zone_mnl ,5)
+                   ,.combine = '+'
+            ) %do% {
+            bh = base_hs(lvl = lvl
+                        ,tp = tp
+                        ,ponyboy = ponyboy_gain_mnl %>% as.vector()
+                        ,prec = prec
+                  )
+
+            th = tr_hs(lvl = lvl
+                      ,tp = tp
+                      ,ponyboy = ponyboy_gain_mnl %>% as.vector()
+                      ,prec = prec
+                  )
+            
+            return(bh+th)
+                    
+            }
+
+cat("Total HS for zones up to:",zone_mnl,": \n",sep = "")
+hs_gain_mnl             %>% 
+mpfr(.,9)               %>% 
+format(.,scientific=20) %>% 
+tibble::as_tibble()     %>% 
+rename(.,"HS"=value)    %>% 
+print()
+
+```
+
+Calculate Outsiders distribution for manually provided desired zone
+```{r Calculate Outsiders distribution for manually provided desired zone, echo=FALSE}
+n = 0
+desired_zone = ( out_zone %/% 500 + n ) * 500
+
+cat("Zone formula: desired_zone = ( out_zone %/% 500 + ",n," ) * 500\n",sep="")  
+cat("Desired zone: "   ,desired_zone      ,"\n",sep = "")
+cat("Zone gain: "      ,desired_zone - hze,"\n",sep = "")
+
+limited_zone = (reach * desired_zone) %/% 500 *500
+cat("Limited zone: "   ,limited_zone      ,"\n",sep = "")
+
+  cat("    Calculate: Orphalas \n")
+  orphalas = orphalas_lvl(max_lvl      = max
+                         ,desired_zone = limited_zone
+                         ,chronos_lvl  = chronos_level
+                         ,tm           = t
+                         )
+
+  cat("    Calculate: Borb \n")  
+  borb = borb_lvl(max_lvl          = max
+                 ,desired_zone     = desired_zone
+                 ,kumawakamaru_lvl = kumawakamaru_level
+                 ,monsters         = m
+                 )
+
+  cat("    Calculate: Rhageist \n")  
+  rhageist = rhag_lvl(max_lvl      = max
+                     ,desired_zone = limited_zone
+                     ,atman_lvl    = atman_level
+                     ,chance       = pc
+                     )
+
+  # cat("    Calculate: K'Ariqua \n")
+  # kariqua = kari_lvl(max_lvl      = max
+  #                   ,desired_zone = desired_zone
+  #                   ,bubos_lvl    = bubos_level
+  #                   ,life         = h
+  #                   )
+
+  cat("    Calculate: Sen-Akhan \n")  
+  sen_akhan = seak_lvl(max_lvl      = max
+                      ,desired_zone = limited_zone
+                      ,dora_lvl     = dora_level
+                      ,chance       = cc
+                      )
+
+  cat("    Calculate: K'Ariqua \n")
+  kariqua = ( as - 
+              grow_cost_lvl(orphalas) - 
+              grow_cost_lvl(borb)     - 
+              grow_cost_lvl(rhageist) - 
+              grow_cost_lvl(sen_akhan) 
+              ) %>% max(.,0) %>% max_lvl()
+  
+  cat("    Calculate: AS spent so far: ")
+  as_spent = grow_cost_lvl(orphalas) + 
+             grow_cost_lvl(borb)     + 
+             grow_cost_lvl(rhageist) + 
+             grow_cost_lvl(kariqua)  +
+             grow_cost_lvl(sen_akhan)
+  cat(as_spent,"\n")
+
+# Ponyboy vs Chor'gorloth benefit
+# based on u/aperfectring 's spreadsheet
+# Number of AS to be distributed to Ponyboy and Chor'gorloth
+cat("    Calculate: AS for Ponyboy and Chor'gorloth: ")
+as_pc = as - as_spent
+cat(as_pc,"\n")
+
+if( as_pc > 0 ){
+  
+max_l = max_lvl(as_pc)
+  
+pony_chor_lvl = distr(as_pc,max_l)
+  
+pony = pony_chor_lvl %>% select(.,pony)
+
+chor = pony_chor_lvl %>% select(.,chor)
+
+xyl_lev = ( as - grow_cost_lvl(chor[[1]]) - grow_cost_lvl(pony[[1]]) - as_spent ) %>% max(.,0) %>% max_lvl()
+    
+    out_0 = data_frame(Outsider = "Xyliqil"
+                       ,Level   = xyl_lev
+                       )
+out_1 = data_frame(Outsider = "Chor'gorloth"
+                   ,Level   = chor[[1]]
+                   ) 
+out_2 = data_frame(Outsider = "Phandoryss"
+                       ,Level   = ( as - grow_cost_lvl(chor[[1]]) - grow_cost_lvl(pony[[1]]) - grow_cost_lvl(xyl_lev) - as_spent ) %>% max(.,0)
+                       )
+out_3 = data_frame(Outsider = "Ponyboy"
+                  ,Level   = pony[[1]]
+                  )
+out_4 = data_frame(Outsider = "Borb"
+                  ,Level   = borb
+                  )
+out_5 = data_frame(Outsider = "Rhageist"
+                  ,Level   = rhageist
+                  )
+out_6 = data_frame(Outsider = "K'Ariqua"
+                  ,Level   = kariqua
+                  )
+out_7 = data_frame(Outsider = "Orphalas"
+                  ,Level   = orphalas
+                  )
+out_8 = data_frame(Outsider = "Sen-Akhan"
+                  ,Level   = sen_akhan
+                  )
+    
+results_mnl = bind_rows(out_0,out_1,out_2,out_3,out_4,out_5,out_6,out_7,out_8)
+
+print(results_mnl)
+}
+```
+
+Check if Outsiders cost equals provided number of AS v2
+```{r Check if Outsiders cost equals provided number of AS v2, echo=FALSE, results='asis'}
+# Checkpoint
+as_check = results_mnl %>% 
+  filter   (.,Outsider != "Phandoryss") %>%
+  transmute(.,cost     =  sapply(Level,grow_cost_lvl) ) %>%
+  summarise(.,sum      =  sum(cost)) +
+           results_mnl %>% 
+  filter(.,Outsider == "Phandoryss") %>% 
+  select(.,Level) %>% as_tibble()
+
+data_frame(Test = (as_check[1,1]-as)
+          ,Result = if_else(Test==0,"OK","Not OK")
+          ) %>%
+print()
+```
+
+```{r HS gained with manually provided parameters, echo=FALSE}
+lvl=desired_zone
+pony_mnl = pony[[1]]
+ponyboy_gain_mnl = (pony_mnl^2)*1000
+
+
+bh = base_hs(lvl = lvl
+            ,tp = tp
+            ,ponyboy = ponyboy_gain_mnl %>% as.vector()
+            ,prec = prec
+            )
+
+th = tr_hs(lvl = lvl
+          ,tp = tp
+          ,ponyboy = ponyboy_gain_mnl %>% as.vector()
+          ,prec = prec
+          )
+            
+tmp=bh+th
+tmp                       %>% 
+  mpfr(.,9)               %>% 
+  format(.,scientific=20) %>% 
+  tibble::as_tibble()     %>% 
+  rename(.,"HS"=value)    %>% 
+  print()
+```
+
+```{r Print results without computation, echo=FALSE, results='asis'}
+cat("    Result: Zone gain is                                    :",desired_zone-hze+499 ,"\n",sep = "")
+cat("    Result: Desired zone is                                 :",desired_zone+499  ,"\n",sep = "")
+cat("    Result: HS gained from highest boss before desired zone :",format(mpfr(hs,9),scientific=20),"\n",sep = "")
+cat("    Result: Zone gain share respective to HZE               :",(out_zone - hze)/hze,"\n",sep = "")
+cat("    Result: Zone gain multiplier                            :",out_zone/hze,"\n",sep = "")
+cat("    Result: Outsiders distribution: \n")
+    
+results_mnl %>% 
+  print()
+    
+desired_zone                   %>% 
+  tibble::as_tibble()          %>% 
+  rename(.,"Goal Zone"=value)  %>% 
+  print()
+    
+tmp %>% 
+  mpfr(.,9)                     %>% 
+  format(.,scientific=20)       %>% 
+  tibble::as_tibble()           %>% 
+  rename(.,"HS top Boss"=value) %>% 
+  print()
+
+cat("\n")
+```
+
+```{r Ratio of AS cost distributed between range Outsiders and efficiency Outsiders, echo=FALSE}
+outsider_ratio = function(distribution){
+  distribution %>% 
+  transmute(.
+           ,ind =if_else(Outsider %in% c("Chor'gorloth","Phandoryss","Ponyboy")
+                         ,"Efficiency"
+                         ,"Range"
+                         )
+           ,cost=if_else(Outsider=="Phandoryss"
+                        ,Level
+                        ,sapply(Level,grow_cost_lvl) %>% as.double()
+                        )
+           ) %>%
+  group_by(.,ind) %>%
+  summarise(.,sum_cost = sum(cost)) %>%
+  mutate(.,share = (sum_cost / sum(sum_cost)) %>% `*`(100) %>% sprintf("%-2.2f%%", .)
+         )
+}
+
+costs = results_mnl %>% outsider_ratio()
+print(costs)
+
+ratio = (costs %>% filter(.,ind=="Range")      %>% select(.,sum_cost) /
+         costs %>% filter(.,ind=="Efficiency") %>% select(.,sum_cost)
+         )                                  %>% 
+        `*`(100) %>% sprintf("%-2.2f%%", .) %>%
+        tibble::as_tibble()                 %>% 
+        rename(.,"Range/Efficiency Ratio"=value)
+print(ratio)
+```
+
+```{r I will try to calculate HS gain from longest run to out_zone, echo=FALSE, results='asis'}
+lvl      = 1680499
+pony_mnl = 4
+ponyboy_gain_mnl = (pony_mnl^2)*1000
+
+cat("                             TP:",tp[1],"\n",sep = "")
+cat("                   Ponyboy gain:",ponyboy_gain_mnl,"\n",sep = "")
+cat("                Desired zone is:",lvl,"\n",sep = "")
+
+hs_total = foreach( lvl = seq( 105 ,lvl ,5 )
+                   ,.combine = '+'
+            ) %do% {
+            bh = base_hs(lvl = lvl
+                        ,tp = tp
+                        ,ponyboy = ponyboy_gain_mnl %>% as.vector()
+                        ,prec = prec
+                  )
+  
+            th = tr_hs(lvl = lvl
+                      ,tp = tp
+                      ,ponyboy = ponyboy_gain_mnl %>% as.vector()
+                      ,prec = prec
+                  )
+            
+            return(bh+th)
+                    
+            }
+
+cat("Total HS from longest ascension: \n")
+hs_total %>% 
+  mpfr(.,9)               %>% 
+  format(.,scientific=20) %>% 
+  tibble::as_tibble()     %>% 
+  rename(.,"HS"=value)    %>% 
+  print()
+```
+
+```{r Calculate approximate number of AS gained, echo=FALSE}
+sac_mp = mpfr(sacrifice,prec)
+as_mnl = as
+
+as_calc = floor( 5 * log10( sac_mp ) )
+cat("Check if math for AS is correct: ",as_calc %>% as.numeric()," : ", if_else(as_calc %>% as.numeric()==as_mnl,"OK","Not OK"),"\n",sep = "")
+
+as_gain = floor( 5 * log10( sac_mp + hs_total ) ) - as_calc
+cat("Number of AS gained with longest Ascension: ",as_gain %>% as.numeric(),"\n",sep = "")
+```
+
+```{r Provide effects for all levels, echo=FALSE}
+levs = seq( 1, desired_zone %/% 500 + 300 )
+
+v_boss_time     = Vectorize(boss_time    ,"lvl")
+v_monsters_zone = Vectorize(monsters_zone,"lvl")
+v_primals       = Vectorize(primals      ,"lvl")
+v_boss_life     = Vectorize(boss_life    ,"lvl")
+v_chest_chance  = Vectorize(chest_chance ,"lvl")
+
+
+effects = data_frame(lvl_500 = levs
+                     ,lvl_0 = (levs - 1) * 500
+                     ,lvl_1 = levs * 500 - 1
+                     ,boss_timer = v_boss_time(lvl_1
+                                              ,results_mnl %>% filter(.,Outsider == "Orphalas") %>% select(.,Level) %>% unlist()
+                                              ,chronos_level)
+                     ,mnstrs_zn  = v_monsters_zone(lvl_1
+                                                  ,results_mnl %>% filter(.,Outsider == "Borb") %>% select(.,Level) %>% unlist()
+                                                  ,kumawakamaru_level)
+                     ,primal_ch  = v_primals(lvl_1
+                                            ,results_mnl %>% filter(.,Outsider == "Rhageist") %>% select(.,Level) %>% unlist()
+                                            ,atman_level) * 100 %>% round(.,2)
+                     ,boss_hlth  = v_boss_life(lvl_1
+                                              ,results_mnl %>% filter(.,Outsider == "K'Ariqua") %>% select(.,Level) %>% unlist()
+                                              ,bubos_level)
+                     ,chest_chnc = v_chest_chance(lvl_1
+                                                  ,results_mnl %>% filter(.,Outsider == "Sen-Akhan") %>% select(.,Level) %>% unlist()
+                                                  ,dora_level) * 100 %>% round(.,2)
+                     )
+
+cat("Effects of all parameters through all zones: \n")
+print(
+  effects %>% filter(.
+                     ,between(row_number(), n()-500, n() )
+                     )
+  )
+
+# Minimal reasonable boss time
+cat("Minimal reasonable boss time: \n")
+bind_rows(
+  effects %>%
+  filter(.,boss_timer >= 10) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+  filter(.,boss_timer >= 9) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+  filter(.,boss_timer >= 8) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+  filter(.,boss_timer >= 7) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+  filter(.,boss_timer >= 6) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+  filter(.,boss_timer >= 5) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+  filter(.,boss_timer >= 4) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+  filter(.,boss_timer >= 3) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+  filter(.,boss_timer >= 2) %>%
+  select(.,lvl_500,lvl_0,lvl_1,boss_timer) %>% filter(.,lvl_500 == max(lvl_500) )
+)
+
+
+# Distribution of number of monsters
+cat("Distribution of number of monsters: \n")
+bind_rows(
+  effects %>% 
+   filter(.,mnstrs_zn <= 2) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>% 
+   filter(.,mnstrs_zn <= 3 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>% 
+   filter(.,mnstrs_zn <= 4 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 5 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 6 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 7 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 8 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 9 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 10 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 11 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 12 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 13 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 14 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>% 
+   filter(.,mnstrs_zn <= 15 ) %>% 
+   select(.,lvl_500,lvl_0,lvl_1,mnstrs_zn) %>% filter(.,lvl_500 == max(lvl_500) )
+) %>% print()
+
+# Distribution of primal boss chance
+cat("Distribution of primal boss chance: \n")
+bind_rows(
+  effects %>%
+    filter(.,primal_ch >= 100) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 95) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 90) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 85) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 80) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 70) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 60) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 50) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 40) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 30) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 20) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 10) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,primal_ch >= 5) %>%
+    select(.,lvl_500,lvl_0,lvl_1,primal_ch) %>% filter(.,lvl_500 == max(lvl_500) )
+) %>% print()
+
+# Distribution of boss life
+cat("Dtstribution of boss life: \n")
+bind_rows(
+  effects %>%
+    filter(.,boss_hlth == 5) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 6) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 7) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 8) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 9) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 10) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 11) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 12) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 13) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,boss_hlth == 14) %>%
+    select(.,lvl_500,lvl_0,lvl_1,boss_hlth) %>% filter(.,lvl_500 == max(lvl_500) )
+) %>% print()
+
+# Distribution of treasure chest chance
+cat("Distribution of treasure chest chance: \n")
+bind_rows(
+  effects %>%
+    filter(.,chest_chnc >= 100) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,chest_chnc >= 95) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,chest_chnc >= 90) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,chest_chnc >= 85) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,chest_chnc >= 80) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,chest_chnc >= 70) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,chest_chnc >= 60) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+ ,effects %>%
+    filter(.,chest_chnc >= 50) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,chest_chnc >= 40) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,chest_chnc >= 30) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,chest_chnc >= 20) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,chest_chnc >= 10) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+  ,effects %>%
+    filter(.,chest_chnc >= 5) %>%
+    select(.,lvl_500,lvl_0,lvl_1,chest_chnc) %>% filter(.,lvl_500 == max(lvl_500) )
+) %>% print()
+```
+
+```{r Print effects for selected level, include=FALSE}
+lev = 377209
+
+effects %>% 
+  filter(.,lvl_500 %in% c(lev %/% 500
+                        ,lev %/% 500 + 1
+                        ,lev %/% 500 + 2
+                        )
+        ) %>%
+  print()
+```
+
