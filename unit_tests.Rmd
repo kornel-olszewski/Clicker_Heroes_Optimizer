@@ -1,0 +1,534 @@
+---
+title: "Unit tests for optimizer functions"
+output: html_notebook
+---
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+                                 !!!! ---- U s e r  i n p u t ---- !!!!
+
+Provide number of AS, Highest Zone Ever and number of sacrificed hero souls
+```{r Provide number of AS and HZE:, echo=FALSE, results='asis'}
+transcension = 136
+
+cat("!!!! >>>> TRANSCENSION NO. ",transcension," <<<< !!!!\n\n",sep="")
+
+as  = 107294
+
+hze = 1107115
+
+cat("AS  : ",as ,"\t\n\n" ,sep = "")
+cat("HZE : ",hze,"\t\n\n" ,sep = "")
+
+tp  = 25 - 23 * exp(-0.0003 * as)
+
+cat("TP  : ",tp ,"%\t\n\n",sep = "")
+
+sacrifice = "6.353e21458"
+
+cat("Sacrificed HS : ",sacrifice,"\t\n",sep="")
+
+```
+
+Provide expected maximum levels of respective Ancients
+and acceptable limiting values of their effects
+```{r Provide ancients levels, echo=TRUE}
+# 1. Chronos,      max_lvl = 1200 (1101)
+chronos_level      = 2000
+t = 3
+# 2. Kumawakamaru, max_lvl = 15000 (14972)
+kumawakamaru_level = 15000
+m = 3
+# 3. Atman,        max_lvl = 2900 (2880)
+atman_level        = 3000
+pc = 0.0525
+# 4. Bubos,        max_lvl = 18800 (18715)
+bubos_level        = 19000
+h = 800
+# 5. Dora,         max_lvl = 18800 (18715)
+dora_level         = 19000
+cc = 0.015
+# 6. Reach parameter - to limit the effect to given share of levels
+reach = 0.4
+```
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+```{r Initial Setup, include=FALSE, results='asis'}
+sessionInfo()
+cat("\n\n\n")
+
+Sys.setlocale("LC_ALL","English")
+Sys.setenv(LANG = "en_US.UTF-8")
+cat("\n\n\n")
+
+library(foreach)
+library(dplyr)
+library(Rmpfr)
+library(knitr)
+cat("\n\n\n")
+
+sessionInfo()
+```
+
+```{r}
+zone_gain =1
+max       = max_lvl(as)
+
+cat("Debug 3: Begin repeat loop\n")
+cat("Debug 3: Available parameters:\n")
+cat("Debug 3: as        =",as,"\n")
+cat("Debug 3: hze       =",hze,"\n")
+cat("Debug 3: reach     =",reach,"\n")
+cat("Debug 3: zone_gain =",zone_gain,"\n")
+cat("Debug 3: max       =",max,"\n")
+
+first = TRUE
+
+repeat{
+  
+  cat("Debug 3: loop 1: zone_gain=",zone_gain,"\n")
+  
+  desired_zone = ( (hze * zone_gain) %/% 500 ) * 500
+  cat("Debug 3: loop 1: desired_zone=",desired_zone,"\n")
+  
+  limited_zone = (reach * desired_zone) %/% 500 *500
+  cat("Debug 3: loop 1: limited_zone=",limited_zone,"\n")
+  
+  orphalas = orphalas_lvl(max_lvl       = 2*max
+                          ,desired_zone = limited_zone
+                          ,chronos_lvl  = chronos_level
+                          ,tm           = t
+  )
+  cat("Debug 3: loop 1: orphalas=",orphalas,"\n")
+  
+  borb = borb_lvl(max_lvl           = 2*max
+                  ,desired_zone     = desired_zone
+                  ,kumawakamaru_lvl = kumawakamaru_level
+                  ,monsters         = m
+  )
+  cat("Debug 3: loop 1: borb=",borb,"\n")
+  
+  rhageist = rhag_lvl(max_lvl       = 2*max
+                      ,desired_zone = limited_zone
+                      ,atman_lvl    = atman_level
+                      ,chance       = pc
+  )
+  cat("Debug 3: loop 1: rhageist=",rhageist,"\n")
+  
+  sen_akhan = seak_lvl(max_lvl       = 2*max
+                       ,desired_zone = limited_zone
+                       ,dora_lvl     = dora_level
+                       ,chance       = cc
+  )
+  cat("Debug 3: loop 1: sen_akhan=",sen_akhan,"\n")
+  
+  kariqua = ( as - 
+                grow_cost_lvl(orphalas) - 
+                grow_cost_lvl(borb)     - 
+                grow_cost_lvl(rhageist) - 
+                grow_cost_lvl(sen_akhan) 
+  ) %>% max(.,0) %>% max_lvl()
+  cat("Debug 3: loop 1: kariqua=",kariqua,"\n")
+  
+  as_spent = grow_cost_lvl(orphalas) + 
+    grow_cost_lvl(borb)     + 
+    grow_cost_lvl(rhageist) + 
+    grow_cost_lvl(kariqua)  +
+    grow_cost_lvl(sen_akhan)
+  cat("Debug 3: loop 1: as_spent=",as_spent,"\n")
+  
+  as_pc = as - as_spent
+  cat("Debug 3: loop 1: as_pc=",as_pc,"\n")
+  
+  if( as_pc <= 0 )
+  {
+    if( first ) 
+    {
+      cat("Debug 3: loop 1: unable to optimize - insufficient AS for provided parameters")
+      stop()
+    }
+    zone_gain = zone_gain - 0.01
+    cat("Debug 3: loop 1: converged at zone_gain=",zone_gain,"\n")
+    break
+  }
+  zone_gain = zone_gain + 0.01
+  first = FALSE
+  
+  # End of Repeat
+}
+
+```
+
+```{r}
+print(desired_zone)
+print(limited_zone)
+print(orphalas)
+print(borb)
+print(rhageist)
+print(sen_akhan)
+print(kariqua)
+print(as_spent)
+print(as_pc)
+print(zone_gain)
+```
+```{r}
+cat("Debug 3: End repeat loop and begin for loop\n")
+
+mult_0 = zone_gain - 0.01
+mult_1 = zone_gain + 0.01
+cat("Debug 3: mult_0=",mult_0," mult_1=",mult_1,"\n")
+
+zone_0 = ( (hze * mult_0) %/% 500 ) * 500
+zone_1 = ( (hze * mult_1) %/% 500 + 1) * 500
+cat("Debug 3: zone_0=",zone_0," zone_1=",zone_1,"\n")
+
+fine_zone = seq(zone_0,zone_1,500)
+cat("Debug 3: fine_zone=",fine_zone,"\n")
+
+for(zone in fine_zone){
+  
+  desired_zone = zone
+  cat("Debug 3: loop 2: desired_zone=",desired_zone,"\n")
+  
+  limited_zone = (reach * desired_zone) %/% 500 *500
+  cat("Debug 3: loop 2: limited_zone=",limited_zone,"\n")
+  
+  orphalas = orphalas_lvl(max_lvl       = max
+                          ,desired_zone = limited_zone
+                          ,chronos_lvl  = chronos_level
+                          ,tm           = t
+  )
+  cat("Debug 3: loop 2: orphalas=",orphalas,"\n")
+  
+  borb = borb_lvl(max_lvl           = max
+                  ,desired_zone     = desired_zone
+                  ,kumawakamaru_lvl = kumawakamaru_level
+                  ,monsters         = m
+  )
+  cat("Debug 3: loop 2: borb=",borb,"\n")
+  
+  rhageist = rhag_lvl(max_lvl       = max
+                      ,desired_zone = limited_zone
+                      ,atman_lvl    = atman_level
+                      ,chance       = pc
+  )
+  cat("Debug 3: loop 2: rhageist=",rhageist,"\n")
+  
+  sen_akhan = seak_lvl(max_lvl       = max
+                       ,desired_zone = limited_zone
+                       ,dora_lvl     = dora_level
+                       ,chance       = cc
+  )
+  cat("Debug 3: loop 2: sen_akhan=",sen_akhan,"\n")
+  
+  kariqua = ( as - 
+                grow_cost_lvl(orphalas) - 
+                grow_cost_lvl(borb)     - 
+                grow_cost_lvl(rhageist) - 
+                grow_cost_lvl(sen_akhan) 
+  ) %>% max(.,0) %>% max_lvl()
+  cat("Debug 3: loop 2: kariqua=",kariqua,"\n")
+  
+  as_spent = grow_cost_lvl(orphalas) + 
+    grow_cost_lvl(borb)     + 
+    grow_cost_lvl(rhageist) + 
+    grow_cost_lvl(kariqua)  +
+    grow_cost_lvl(sen_akhan)
+  cat("Debug 3: loop 2: as_spent=",as_spent,"\n")
+  
+  as_pc = as - as_spent
+  cat("Debug 3: loop 2: as_pc=",as_pc,"\n")
+  
+  if( as_pc <= 0 )
+  {
+    desired_zone = zone - 500
+    cat("Debug 3: loop 2: converged at zone=",desired_zone,"\n")
+    break;
+  }
+  
+}
+
+```
+```{r}
+print(desired_zone)
+print(limited_zone)
+print(orphalas)
+print(borb)
+print(rhageist)
+print(sen_akhan)
+print(kariqua)
+print(as_spent)
+print(as_pc)
+print(zone_gain)
+```
+```{r}
+
+cat("Debug 3: >>End optimizer.R script<<\n")
+```
+
+```{r}
+cat("Debug 3: Calculate Outsiders final distribution\n")
+
+limited_zone = (reach * desired_zone) %/% 500 *500
+  cat("Debug 3: loop 2: limited_zone=",limited_zone,"\n")
+  
+  orphalas = orphalas_lvl(max_lvl       = max
+                          ,desired_zone = limited_zone
+                          ,chronos_lvl  = chronos_level
+                          ,tm           = t
+  )
+  cat("Debug 3: loop 2: orphalas=",orphalas,"\n")
+  
+  borb = borb_lvl(max_lvl           = max
+                  ,desired_zone     = desired_zone
+                  ,kumawakamaru_lvl = kumawakamaru_level
+                  ,monsters         = m
+  )
+  cat("Debug 3: loop 2: borb=",borb,"\n")
+  
+  rhageist = rhag_lvl(max_lvl       = max
+                      ,desired_zone = limited_zone
+                      ,atman_lvl    = atman_level
+                      ,chance       = pc
+  )
+  cat("Debug 3: loop 2: rhageist=",rhageist,"\n")
+  
+  sen_akhan = seak_lvl(max_lvl       = max
+                       ,desired_zone = limited_zone
+                       ,dora_lvl     = dora_level
+                       ,chance       = cc
+  )
+  cat("Debug 3: loop 2: sen_akhan=",sen_akhan,"\n")
+  
+  kariqua = ( as - 
+                grow_cost_lvl(orphalas) - 
+                grow_cost_lvl(borb)     - 
+                grow_cost_lvl(rhageist) - 
+                grow_cost_lvl(sen_akhan) 
+  ) %>% max(.,0) %>% max_lvl()
+  cat("Debug 3: loop 2: kariqua=",kariqua,"\n")
+  
+  as_spent = grow_cost_lvl(orphalas) + 
+    grow_cost_lvl(borb)     + 
+    grow_cost_lvl(rhageist) + 
+    grow_cost_lvl(kariqua)  +
+    grow_cost_lvl(sen_akhan)
+  cat("Debug 3: loop 2: as_spent=",as_spent,"\n")
+  
+  as_pc = as - as_spent
+  cat("Debug 3: loop 2: as_pc=",as_pc,"\n")
+
+max_lev = max_lvl(as_pc)
+pony_chor_lvl = distr(as_pc,max_lev)
+
+pony = pony_chor_lvl %>% select(.,pony)
+
+chor = pony_chor_lvl %>% select(.,chor)
+
+xyl_lev = ( as - grow_cost_lvl(chor[[1]]) - grow_cost_lvl(pony[[1]]) - as_spent ) %>% max(.,0) %>% max_lvl()
+
+out_0 = data_frame(Outsider = "Xyliqil"
+                   ,Level   = xyl_lev
+)
+out_1 = data_frame(Outsider = "Chor'gorloth"
+                   ,Level   = chor[[1]]
+) 
+out_2 = data_frame(Outsider = "Phandoryss"
+                   ,Level   = ( as - grow_cost_lvl(chor[[1]]) - grow_cost_lvl(pony[[1]]) - grow_cost_lvl(xyl_lev) - as_spent ) %>% max(.,0)
+)
+out_3 = data_frame(Outsider = "Ponyboy"
+                   ,Level   = pony[[1]]
+)
+out_4 = data_frame(Outsider = "Borb"
+                   ,Level   = borb
+)
+out_5 = data_frame(Outsider = "Rhageist"
+                   ,Level   = rhageist
+)
+out_6 = data_frame(Outsider = "K'Ariqua"
+                   ,Level   = kariqua
+)
+out_7 = data_frame(Outsider = "Orphalas"
+                   ,Level   = orphalas
+)
+out_8 = data_frame(Outsider = "Sen-Akhan"
+                   ,Level   = sen_akhan
+)
+
+results_1 = bind_rows(out_0
+                      ,out_1
+                      ,out_2
+                      ,out_3
+                      ,out_4
+                      ,out_5
+                      ,out_6
+                      ,out_7
+                      ,out_8
+                      )
+
+print(results_1)
+```
+
+
+```{r}
+seak_lvl(462,863500,19000,0.015)
+```
+```{r}
+foreach( lvl       = 0:462
+                       ,.combine = c
+  ) %do% if( chest_chance(lvl           = 863500
+                          ,sen_akhan_lvl = lvl
+                          ,dora_lvl      = 19000) >= 0.015 ) {lvl}
+```
+```{r}
+max_lvl(as)
+```
+```{r, echo=FALSE}
+inline_hook <- function(x) {
+  if (is.numeric(x)) {
+    format(x, digits = 2)
+  } else x
+}
+knitr::knit_hooks$set(inline = inline_hook)
+
+```
+
+```{r, echo=FALSE, results='asis'}
+library(foreach)
+library(dplyr)
+
+library(here)
+library(rmarkdown)
+
+here("scripts","01_boss_time.R") %>% source()
+here("scripts","02_monsters_zone.R") %>% source()
+here("scripts","03_primals.R") %>% source()
+here("scripts","04_chest_chance.R") %>% source()
+
+here("scripts","05_grow_cost.R") %>% source()
+here("scripts","06_max_lvl.R") %>% source()
+
+here("scripts","07_orphalas_lvl.R") %>% source()
+here("scripts","08_borb_lvl.R") %>% source()
+here("scripts","09_rhageist_lvl.R") %>% source()
+here("scripts","10_sen_akhan_lvl.R") %>% source()
+
+here("scripts","11_pony_chor_distr.R") %>% source()
+
+#here("scripts","12_base_hs.R") %>% source()
+#here("scripts","13_tr_hs.R") %>% source()
+
+here("scripts","17_boss_life.R") %>% source(.,local=FALSE)
+
+a_s  = 107294
+assign("a_s", a_s, envir = .GlobalEnv)
+
+hze = 1107115
+assign("hze", hze, envir = .GlobalEnv)
+
+cat("AS  : ",a_s,"\t\n\n" ,sep = "")
+cat("HZE : ",hze,"\t\n\n" ,sep = "")
+
+# 1. Chronos,      max_lvl = 1200 (1101)
+chronos_level      = 2000
+assign("chronos_level", chronos_level, envir = .GlobalEnv)
+t = 3
+assign("t", t, envir = .GlobalEnv)
+# 2. Kumawakamaru, max_lvl = 15000 (14972)
+kumawakamaru_level = 15000
+assign("kumawakamaru_level", kumawakamaru_level, envir = .GlobalEnv)
+m = 3
+assign("m", m, envir = .GlobalEnv)
+# 3. Atman,        max_lvl = 2900 (2880)
+atman_level        = 3000
+assign("atman_level", atman_level, envir = .GlobalEnv)
+pc = 0.0525
+assign("pc", pc, envir = .GlobalEnv)
+# 5. Dora,         max_lvl = 18800 (18715)
+dora_level         = 19000
+assign("dora_level", dora_level, envir = .GlobalEnv)
+cc = 0.015
+assign("cc", cc, envir = .GlobalEnv)
+# 6. Reach parameter - to limit the effect to given share of levels
+reach = 0.4
+assign("reach", reach, envir = .GlobalEnv)
+
+here("scripts","14_optimizer.R") %>%
+source(file = .
+      , local = F
+      , echo = T
+      )
+
+print(results)
+```
+```{r, echo=FALSE, results='asis'}
+here("scripts","15_costs.R") %>%
+        source(file = .
+               , local = T
+               , echo = T
+        )
+print(costs)
+print(ratio)
+```
+```{r, echo=FALSE, results='asis'}
+here("scripts","16_zone_effects.R") %>%
+        source(file = .
+               , local = T
+               , echo = T
+        )
+print(effects)
+print(time_distr)
+print(monsters_distr)
+print(primal_ch_distr)
+print(chest_ch_distr)
+```
+```{r, echo=FALSE, results='asis'}
+report_path = here("template","template.Rmd") %>% normalizePath()
+        
+        cat("Debug 5: Value of report_path: ",report_path,"\n")
+        
+        owd = tempdir() %>% setwd()
+        
+        file.copy(report_path
+                  ,"Report.Rmd"
+                  ,overwrite = TRUE
+        )
+        
+        cat("Debug 5: Declaring list of parameters\n")
+        params = list(
+          in_as = a_s
+          ,in_hze = hze
+          ,desired_zone = desired_zone
+          ,chrono_l = chronos_level
+          ,ti = t
+          ,kuma_l = kumawakamaru_level
+          ,mo = m
+          ,atman_l = atman_level
+          ,pch = pc
+          ,dora_l = dora_level
+          ,cch = cc
+          ,limit = reach
+          ,results = results
+          ,costs = costs
+          ,ratio = ratio
+          ,effects = effects
+          ,time_distr = time_distr
+          ,monsters_distr = monsters_distr
+          ,primal_ch_distr = primal_ch_distr
+          ,chest_ch_distr = chest_ch_distr
+        )
+        
+        cat("Debug 5: Parameters passed to report\n")
+        print(params)
+        assign("params", params, envir = .GlobalEnv)
+        
+        out = rmarkdown::render("Report.Rmd"
+                                ,output_format = "pdf_document"
+                                ,params = params
+                                ,envir = new.env(parent = globalenv())
+        )
+        
+        file.rename(out,"test_file.pdf")
+```
+

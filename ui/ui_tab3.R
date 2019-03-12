@@ -1,0 +1,12 @@
+list(
+  h2("Distribution of zone effects")
+  ,dataTableOutput("effects")
+  ,h3("Distribution of boss time")
+  ,dataTableOutput("time_distr")
+  ,h3("Distribution of number of monsters")
+  ,dataTableOutput("monsters_distr")
+  ,h3("Distribution of primal boss chance")
+  ,dataTableOutput("primal_ch_distr")
+  ,h3("Distribution of treasure chest chance")
+  ,dataTableOutput("chest_ch_distr")
+)

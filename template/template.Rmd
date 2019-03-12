@@ -1,0 +1,75 @@
+---
+title: "Clicker Heroes Optimizer results"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+Values provided as input parameters:
+
+AS  : ``r params$in_as``
+HZE : ``r params$in_hze``
+
+
+Values provided as control parameters:
+
+Achievable levels of Ancients and limits of their respective parameters:
+* Achievable level of Chronos: ``r params$chrono_l``
+* Acceptable minimal boss time: ``r params$ti``
+* Achievable level of Kumawakamaru: ``r params$kuma_l``
+* Maximum number of monsters at end zone: ``r params$mo``
+* Achievable level of Atman: ``r params$atman_l``
+* Accaptable minimal primal boss chance: ``r params$pch``
+* Achievable level of Dora: ``r params$dora_l``
+* Acceptable minimal treasure chest chance: ``r params$cch``
+* Limiting factor for Chronos, Atman and Dora effects: ``r params$limit``
+
+***
+Convergence zone: ``r params$desired_zone``
+
+```{r, echo=FALSE}
+inline_hook <- function(x) {
+  if (is.numeric(x)) {
+    format(x, digits = 2)
+  } else x
+}
+knitr::knit_hooks$set(inline = inline_hook)
+
+```
+
+Distribution of Outsiders:
+```{r 04_distribution, echo=FALSE, results='asis', paged.print=FALSE}
+params$results
+```
+***
+Relative costs of Xyliqil, Chor'gorloth, Phandoryss and Ponyboy against Borb, Rhageist, K'Ariqua, Orphalas and Sen-Akhan:
+```{r 05_costs, echo=FALSE, results='asis', paged.print=FALSE}
+params$costs
+params$ratio
+```
+***
+Detailed distribution of all effects through game zones (last 500 zones):
+```{r 06_effects, echo=FALSE, results='asis', paged.print=FALSE}
+params$effects%>% filter(., between(row_number(), n()-500, n()))
+```
+***
+Distribution of boss timers:
+```{r 07_time_distr, echo=FALSE, results='asis', paged.print=FALSE}
+params$time_distr
+```
+
+Distribution of number of monsters:
+```{r 08_monsters_distr, echo=FALSE, results='asis', paged.print=FALSE}
+params$monsters_distr
+```
+
+Distribution of primal boss chance:
+```{r 09_primal_ch_distr, echo=FALSE, results='asis', paged.print=FALSE}
+params$primal_ch_distr
+```
+
+Distribution of treasure chest chance:
+```{r 10_chest_ch_distr, echo=FALSE, results='asis', paged.print=FALSE}
+params$chest_ch_distr
+```
+
